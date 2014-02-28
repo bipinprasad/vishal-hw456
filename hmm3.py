@@ -11,7 +11,7 @@ import random
 import traceback
 
 
-verbose_flag = True
+verbose_flag = False
 training_words = None  # list of all words in the training initialized by loadTraingFile()
 training_chars = None  # list of characters
 doVisualization = False
@@ -513,8 +513,8 @@ def expected_count_of_state_production_of_letters():
     for word,forward_probabilities in forward_probabilities_by_word.items():
         backward_probabilities = backward_probabilities_by_word[word]
         wordlen = len(word)
-        tmp_alpha_total += sum(forward_probabilities[wordlen])
-        tmp_beta_total  += sum([backward_probabilities[0][i]*pi[i] for i in state_numbers])
+        tmp_alpha_total = sum(forward_probabilities[wordlen])
+        tmp_beta_total  = sum([backward_probabilities[0][i]*pi[i] for i in state_numbers])
         for i_char,c in enumerate(word):
             if c not in soft_count_probabilities_for_letter:
                 prob_matrix = [[0.0 for from_state in state_numbers] for to_state in state_numbers]
@@ -524,7 +524,7 @@ def expected_count_of_state_production_of_letters():
             t = i_char
             for from_state in state_numbers:
                 for to_state in state_numbers:
-                    prob = forward_probabilities[t][from_state] * transitionProbs[from_state][to_state] * emissionProbs[from_state][c] * backward_probabilities[t+1][to_state]  
+                    prob = forward_probabilities[t][from_state] * transitionProbs[from_state][to_state] * emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] / tmp_alpha_total 
                     prob_matrix[from_state][to_state] += (prob)
           
     # This matrix is NOT rationalize to 1.0 probability for each letter
@@ -588,7 +588,7 @@ def maximization_part_1():
     print '-----------'
     print 'Emission'
     print '-----------'
-    
+
     calculated_emissionProbs = [dict() for i in state_numbers]
     
     for from_state in state_numbers:
@@ -691,11 +691,30 @@ def maximization_part_2():
 
     calculated_transitionProbs = [[0.0 for i in state_numbers] for j in state_numbers]
     
+    soft_count_probabilities_for_time = dict()
+    
+    for word,forward_probabilities in forward_probabilities_by_word.items():
+        backward_probabilities = backward_probabilities_by_word[word]
+        wordlen = len(word)
+        tmp_alpha_total = sum(forward_probabilities[wordlen])
+        #tmp_beta_total  = sum([backward_probabilities[0][i]*pi[i] for i in state_numbers])
+        for t,c in enumerate(word):
+            if t not in soft_count_probabilities_for_time:
+                prob_matrix = [[0.0 for from_state in state_numbers] for to_state in state_numbers]
+                soft_count_probabilities_for_time[t] = prob_matrix
+            else:
+                prob_matrix = soft_count_probabilities_for_time[t]
+            for from_state in state_numbers:
+                for to_state in state_numbers:
+                    prob = forward_probabilities[t][from_state] * transitionProbs[from_state][to_state] * emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] / tmp_alpha_total 
+                    prob_matrix[from_state][to_state] += prob
+            
+
     for from_state in state_numbers:
         print '\tFrom State %s' % from_state
-        from_state_soft_total = sum([soft_count_probabilities_for_letter[c][from_state][to_state] for c in training_chars for to_state in state_numbers])
+        from_state_soft_total = sum([x[from_state][to_state] for x in soft_count_probabilities_for_time.values() for to_state in state_numbers])
         for to_state in state_numbers:
-            fromto_soft_total = sum([soft_count_probabilities_for_letter[c][from_state][to_state] for c in training_chars])
+            fromto_soft_total = sum([x[from_state][to_state] for x in soft_count_probabilities_for_time.values()])
             calculated_transitionProbs[from_state][to_state] = fromto_soft_total / from_state_soft_total
             print '\t\tTo State %d      prob: %s   (%s over %s)' % (to_state, calculated_transitionProbs[from_state][to_state], fromto_soft_total, from_state_soft_total)
     
@@ -712,12 +731,11 @@ def maximization_part_2():
     Unfortunately we didn't save this information in any structure
     So - recalculate  gamma
     '''
-    state_counts = [0.0 for i in state_numbers]
-    for word in training_words:
-        forward_probabilities = forward_probabilities_by_word[word]
-        backward_probabilities = backward_probabilities_by_word[word]
-        for from_state in state_numbers:
-            state_counts[from_state] += sum([forward_probabilities[0][from_state] * transitionProbs[from_state][to_state] * emissionProbs[from_state][word[0]] * backward_probabilities[1][to_state] for to_state in state_numbers])
+    t0_soft_total = sum([ sum(soft_count_probabilities_for_time[0][from_state]) for from_state in state_numbers])
+    calculated_pi = [0.0 for state in state_numbers]                  
+    for from_state in state_numbers:
+        calculated_pi[from_state] = sum(soft_count_probabilities_for_time[0][from_state]) / t0_soft_total
+        print '\tState %s : %s' % (from_state, calculated_pi[from_state])
         
     # for state in state_numbers:
     #     transitionProb = transitionProbs[state]
@@ -736,11 +754,6 @@ def maximization_part_2():
     #             print 'state %d, word "%s" %s' % (state, word, state_transition_prob_for_word)
     #         state_counts[state] += state_transition_prob_for_word
 
-    all_state_cnts = sum(state_counts)
-    calculated_pi = [state_counts[i] / all_state_cnts for i in state_numbers]
-    for state in state_numbers:
-        print '\tState %s : %s' % (state, calculated_pi[state])
-    
     return calculated_pi,calculated_transitionProbs
             
     # for from_state in state_numbers:
