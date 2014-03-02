@@ -3,6 +3,7 @@ Created on Feb 17, 2014
 
 @author: Vishal
 '''
+import os
 import traceback
 
 try:
@@ -16,7 +17,7 @@ except:
     print '-------------------------------------------------------------'
 
 
-def plot2d(data, mytitle, xaxistitle="X", yaxistitle="Y", mycolor=(0,0,0), minpoint=None, maxpoint=None):
+def plot2d(data, mytitle, result_dir=None, xaxistitle="X", yaxistitle="Y", mycolor=(0,0,0), minpoint=None, maxpoint=None):
     '''
     data: list of tuples of (x,y)
     mytitle: determines the name of the of PDF file.
@@ -26,13 +27,14 @@ def plot2d(data, mytitle, xaxistitle="X", yaxistitle="Y", mycolor=(0,0,0), minpo
     '''
     try:
         fnameprefix = '-'.join(mytitle.split()) + '-2d'
+        if result_dir: fnameprefix = os.path.join(result_dir, fnameprefix)
         datafile    = fnameprefix + '.dat'
         with open(datafile, 'w') as f:
             f.write('\n'.join(['%s\t%s' % (x,y) for x,y in data]))
             f.close()
             print 'Data File written: %s' % datafile
     except:
-        print '%s: Failed to save data file' % (mytitle, datafile)
+        print '%s: Failed to save data file %s' % (mytitle, datafile)
         traceback.print_exc()
     
     try:
@@ -44,8 +46,8 @@ def plot2d(data, mytitle, xaxistitle="X", yaxistitle="Y", mycolor=(0,0,0), minpo
         if maxpoint:
             xmax,ymax = maxpoint
         else:
-            xmax = max(1,max([x for x,y in data]))
-            ymax = max(1,max([y for x,y in data]))
+            xmax = max([x for x,y in data])
+            ymax = max([y for x,y in data])
             
         print 'xmin=%s, xmax=%s' % (xmin, xmax)
         print 'ymin=%s, ymax=%s' % (ymin, ymax)
@@ -81,17 +83,18 @@ def plotIterationInfo(transitionIterations, title):
     
     plot2d(data, title, xaxistitle=xaxistitle, yaxistitle=yaxistitle, mycolor=(0,0,0), minpoint=None, maxpoint=None)
         
-def plotIteration3D(data, mytitle, xaxistitle="State Transition From 0 to 1", yaxistitle="State Transition From 0 to 1", mycolor=(0,0,0), minpoint=None, maxpoint=None):       
+def plotIteration3D(data, mytitle, result_dir=None, xaxistitle="State Transition From 0 to 1", yaxistitle="State Transition From 0 to 1", mycolor=(0,0,0), minpoint=None, maxpoint=None):       
     # Save the data into file
     try:
         fnameprefix = '-'.join(mytitle.split()) + '-3d'
+        if result_dir: fnameprefix = os.path.join(result_dir, fnameprefix)
         datafile    = fnameprefix + '.dat'
         with open(datafile, 'w') as f:
             f.write('\n'.join(['%s\t%s\t%s' % (x,y,z) for x,y,z in data]))
             f.close()
             print 'Data File written: %s' % datafile
     except:
-        print '%s: Failed to save data file' % (mytitle, datafile)
+        print '%s: Failed to save data file %s' % (mytitle, datafile)
         traceback.print_exc()
     
     try:
@@ -113,8 +116,54 @@ def main():
     Test code
     '''
     print 'Passed import'
-    data = [(1,1), (1.5, 1.7), (2.0, 3.0), (2.5, 2.5), (3.0, 2.0), (3.5, 1.5), (4.0,0.5), (4.5,0)]
-    plot2d(data, 'Test-Data')
+    
+    print2d = False
+    print3d = True
+ 
+    if print2d:   
+        data = [(1,1), (1.5, 1.7), (2.0, 3.0), (2.5, 2.5), (3.0, 2.0), (3.5, 1.5), (4.0,0.5), (4.5,0)]
+        plot2d(data, 'Test-Data')
+        
+    if print3d:
+        data = [
+                (0.44137052527 , 0.544831665844, 0.0314080754412),
+                (0.431536743272, 0.544398736017, 0.0318019973992),
+                (0.419327149142, 0.543297793506, 0.0322310354077),
+                (0.403113745823, 0.542323283885, 0.0328516649778),
+                (0.38226652814 , 0.541094026062, 0.0337153285836),
+                (0.356440955193, 0.539137793051, 0.0348684146996),
+                (0.325920056516, 0.535779200061, 0.0363212199381),
+                (0.291858265482, 0.530117021477, 0.0380033504816),
+                (0.256143473115, 0.521193379869, 0.0397474485233),
+                (0.22091488599 , 0.508331987432, 0.0413294839749),
+                (0.188045554859, 0.491560787984, 0.0425442454526),
+                (0.158705454016, 0.471845711496, 0.0432838933958),
+                (0.133200978513, 0.450782646486, 0.0435615347829),     
+                ]
+        try:
+            fnameprefix = 'Test-Data3d'
+            mytitle = 'Test Data 3D'
+            g = graph.graphxyz(size=3)
+            xdata = [x for x,y,z in data]
+            ydata = [y for (x,y,z) in data]
+            zdata = [z for (x,y,z) in data]
+            
+            g.plot(graph.data.file('TestData3d.dat'),
+                   [graph.style.surface()])
+#             g.plot(graph.data.points(data, x=1, y=2, z=3),
+#                    [graph.style.surface()])
+#             g = graph.graphxyz(size=4,projector=graph.graphxyz.parallel(170, 45))
+#                 # g.plot(graph.data.file("color.dat", x=1, y=2, z=3, color=3),
+#             g.plot(graph.data.points(data, x=1, y=2, z=3, color=3),
+#                    [graph.style.surface(gradient=color.gradient.RedGreen,
+#                                         gridcolor=color.rgb.black,
+#                                         backcolor=color.rgb.black)])
+            g.writeEPSfile(fnameprefix)
+            g.writePDFfile(fnameprefix)
+            print 'Graph PDF File written: %s.pdf' % fnameprefix
+        except:
+            print '%s: Failed to create Graph' % mytitle
+            traceback.print_exc()
     
 if __name__ == '__main__':
     main()

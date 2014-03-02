@@ -14,7 +14,7 @@ import traceback
 verbose_flag = False
 training_words = None  # list of all words in the training initialized by loadTraingFile()
 training_chars = None  # list of characters
-doVisualization = False
+doVisualization = True
 
 if doVisualization:
     import graphit
@@ -849,7 +849,7 @@ def expectation_maximization(title='Expectation Maximization',max_loop_cnt=1000,
         total_prob_new  = calculate_total_probabilities()
         expected_count_of_state_production_of_letters()
         
-        if abs(total_prob_new - total_prob) < min_probability_increment:
+        if (total_prob_new - total_prob) < min_probability_increment:
             print '%s: Completed after %d loops, since new probability (%s), did not change enough from old probability (%s)' % (title, loopCnt, total_prob_new, total_prob)
             break
         
@@ -1006,7 +1006,7 @@ def bonusProjectPhonemicTranscription():
         if not line: continue
         if line[0] == ';': continue;
         words = line.strip().lower().split()
-        cmu_phonemes[words[0]] = ' '.join(words[1:])
+        cmu_phonemes[words[0]] = ''.join(words[1:])
         
     
     phonemes = set()
@@ -1099,7 +1099,7 @@ def main():
     if doVisualization:
         visualization(history[1:], title)   # drop first one in history becuase it was randomly generated and skews the graph
     
-    doPhonemicMaximization = True
+    doPhonemicMaximization = False
     if not doPhonemicMaximization:
         print '-----------------------------------------------------------------'
         print 'File: %s' % __file__
