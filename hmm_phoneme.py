@@ -10,7 +10,7 @@ import traceback
 import math
 from collections import defaultdict
 
-verbose_flag = True
+verbose_flag = False
 doVisualization = True
 doRegularMaximization = True
 doPhonemicMaximization = True
