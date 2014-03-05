@@ -7,11 +7,14 @@ import sys
 import os
 import random
 import traceback
+import math
+from collections import defaultdict
 
 verbose_flag = True
 doVisualization = True
 doRegularMaximization = True
 doPhonemicMaximization = True
+redirectOutput = True
 
 # training = None
 # hmmModel = None
@@ -28,6 +31,7 @@ class HmmModel(object):
         self.forward_probabilities_by_word  = dict()
         self.backward_probabilities_by_word = dict()
         self.total_probability_by_word      = dict()
+        self.p_tij_by_word                  = dict()
     
         if not pi:
             return
@@ -90,9 +94,7 @@ class HmmModel(object):
                 emissionProbs[i] = emissionProb
                 for c in self.allEmissionChars:
                     emissionProb[c] = random.random()
-                tmp = sum(emissionProb.values())
-                for c in self.allEmissionChars:
-                    emissionProb[c] /= tmp
+            HmmModel.normalizeEmissionProbs(emissionProbs)
     
         else:
             pi = [0.1*(i+1) for i in self.state_numbers]   
@@ -114,10 +116,9 @@ class HmmModel(object):
                 emissionProbs[i] = emissionProb
                 for i_char,c in enumerate(self.allEmissionChars):
                     emissionProb[c] = (i+1.0) * (i_char + 1.0)
-                tmp = sum(emissionProb.values())
-                for c in self.allEmissionChars:
-                    emissionProb[c] /= tmp
-    
+                    
+            HmmModel.normalizeEmissionProbs(emissionProbs)
+            
         self.pi = pi
         self.transitionProbs = transitionProbs
         self.emissionProbs   = emissionProbs
@@ -125,6 +126,14 @@ class HmmModel(object):
         self.forward_probabilities_by_word.clear()
         self.backward_probabilities_by_word.clear()
         self.total_probability_by_word.clear()
+        self.p_tij_by_word.clear()
+    
+    @classmethod
+    def normalizeEmissionProbs(cls, emissionProbs):
+        for emissionProb in emissionProbs:
+            tmp = sum(emissionProb.values())
+            for c in emissionProb:
+                emissionProb[c] /= tmp
     
     def validateSetup(self):
         '''
@@ -151,15 +160,16 @@ class HmmModel(object):
         print title
         print '----------------------'   
         print
+        print 'Total Word Probabilities: %s' % self.total_probability
         print 'Number of states: %d' % self.state_cnt
         print 'State numbers: %s' % self.state_numbers
-        print 'State Probability, pi:' % self.pi
+        print 'State Probability, pi (%s):' % sum(self.pi)
         for i in self.state_numbers:
             print '\tState %d  %s' % (i, self.pi[i])
         
         print 'Transition Probabilities:'
         for state_num in self.state_numbers:
-            print '\tFrom state %d: %s' % (state_num, self.transitionProbs[state_num])
+            print '\tFrom state %d: %s, total=%s' % (state_num, self.transitionProbs[state_num], sum(self.transitionProbs[state_num]))
             
         print 'Emission Probabilities:'
         for state_num in self.state_numbers:
@@ -173,6 +183,21 @@ class HmmModel(object):
             else:
                 for c in self.allEmissionChars:
                     print '\t\t\t %s: %s' % (c, emissionProb[c])
+                    
+        print 'Emission Log Probability - log(State0/State1)'
+        emissionProb = dict()
+        for k in self.emissionProbs[0].keys():
+            if self.emissionProbs[0][k] == 0.0:
+                logProbability = 0.0
+            elif self.emissionProbs[1][k] == 0:
+                logProbability = '1000 Divide by zero: %s / %s' % (self.emissionProbs[0][k] , self.emissionProbs[1][k])
+            else:
+                logProbability = math.log(self.emissionProbs[0][k] / self.emissionProbs[1][k])
+            emissionProb[k] = logProbability
+        for c,v in sorted(emissionProb.items(), key=lambda char_prob: char_prob[1], reverse=True):
+            print '\t\t\t %s: %s' % (c, v)
+        
+            
     
     def printTransitionsAndEmissions(self):
         
@@ -337,6 +362,8 @@ class HmmModel(object):
             self.backward_probabilities_by_word[training_word] = b
         
             self.total_probability_by_word[training_word] = sum(a[0][i]*b[0][i] for i in self.state_numbers)
+        
+        self._calculate_p_tij()
             
         self.total_probability = sum(self.total_probability_by_word.values())
         
@@ -407,8 +434,9 @@ class HmmModel(object):
                 t = i_char
                 for from_state in self.state_numbers:
                     for to_state in self.state_numbers:
-                        prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] / tmp_alpha_total 
-                        prob_matrix[from_state][to_state] += (prob)
+                        #prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] / tmp_alpha_total 
+                        prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] 
+                        prob_matrix[from_state][to_state] += prob
               
         # This matrix is NOT rationalize to 1.0 probability for each letter
         # Because we will use this same matrix to rationalize over the whole alphabet
@@ -441,6 +469,142 @@ class HmmModel(object):
                     if verbose_flag: print '\t\t\t\tTo state: %s\t%s;' % (to_state, prob)
                         
                 
+    def _calculate_p_tij(self):
+        '''
+        calculate the p_tij matrix for each word and save it for use in recalculating the new state.
+        
+        self.p_tij_by_word[training_word] = p_tij
+        
+        '''
+        
+        
+        for training_word,forward_probabilities in self.forward_probabilities_by_word.items():
+            backward_probabilities = self.backward_probabilities_by_word[training_word]
+            word_parts = training_word.parts()
+            wordlen = len(word_parts)
+            P_tij = [[[0.0 for from_state in self.state_numbers] for to_state in self.state_numbers] for t in range(wordlen)]
+            self.p_tij_by_word[training_word] = P_tij
+            
+            tmp_alpha_total = sum(forward_probabilities[wordlen])
+            tmp_beta_total  = sum([backward_probabilities[0][i] * self.pi[i] for i in self.state_numbers])
+            
+            for t,c in enumerate(word_parts):
+                for from_state in self.state_numbers:
+                    for to_state in self.state_numbers:
+                        try:
+                            prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] # / tmp_alpha_total
+                        except ZeroDivisionError:
+                            prob = 0.0 
+                        P_tij[t][from_state][to_state] = prob
+
+    def maximization_part_1_new(self):
+        '''
+        calculate, for each state, what the total soft counts are for each letter generated by that state over 
+        the whole corpus. And then normalize that into a distribution over the alphabet, which gives you the 
+        probability distribution for the alphabet for that state.
+        
+        Return calculated_emissionProbs. This will serve as new values for subsequent loop in maximization.
+        '''
+        
+        if verbose_flag:
+            print '-----------'
+            print 'Emission'
+            print '-----------'
+    
+        calculated_emissionProbs = [defaultdict(float) for i in self.state_numbers]
+
+        for training_word,forward_probabilities in self.forward_probabilities_by_word.items():
+            backward_probabilities = self.backward_probabilities_by_word[training_word]
+            word_parts = training_word.parts()
+            wordlen = len(word_parts)
+            p_tij = self.p_tij_by_word[training_word]
+            
+            
+            for from_state in self.state_numbers:
+                emissionProb = calculated_emissionProbs[from_state]
+                '''expected number of transitions from i to j when k is observed'''
+                '''expected number of transitions from i to j'''
+                expected_transitions_from_state = sum( [ sum(p_tij[t][from_state]) for t in range(wordlen) ])
+
+                for t,c in enumerate(word_parts):
+                    expected_transition_from_state_for_c = sum(p_tij[t][from_state])
+                    emissionProb[c] += expected_transition_from_state_for_c / expected_transitions_from_state
+
+        HmmModel.normalizeEmissionProbs(calculated_emissionProbs)
+        for from_state in self.state_numbers:
+            emissionProb = calculated_emissionProbs[from_state]            
+            # Now letter summary
+            print
+            if verbose_flag: print '\tFrom State %s' % from_state
+            for c,v in emissionProb.items():
+                if verbose_flag: print '\t\tLetter: "%s"    probability: %s' % (c, v)
+    
+        return calculated_emissionProbs
+                          
+                          
+    def maximization_part_2_new(self):
+        '''
+        recalculate the transition probabilities, and the Pi probabilities and print them
+        
+        return recalulated values for transitionProbs and pi (for use in next iteration)
+        '''   
+        if verbose_flag:
+            print '-----------'
+            print 'Transition'
+            print '-----------'
+    
+        soft_count_probabilities_for_time = dict()
+        calculated_transitionProbs = [[0.0 for i in self.state_numbers] for j in self.state_numbers]
+        
+        for training_word,forward_probabilities in self.forward_probabilities_by_word.items():
+            backward_probabilities = self.backward_probabilities_by_word[training_word]
+            p_tij = self.p_tij_by_word[training_word]
+            word_parts = training_word.parts()
+            wordlen = len(word_parts)
+            #tmp_alpha_total = sum(forward_probabilities[wordlen])
+            #tmp_beta_total  = sum([backward_probabilities[0][i]*pi[i] for i in self.state_numbers])
+            for t,c in enumerate(word_parts):
+                if t not in soft_count_probabilities_for_time:
+                    prob_matrix = [[0.0 for from_state in self.state_numbers] for to_state in self.state_numbers]
+                    soft_count_probabilities_for_time[t] = prob_matrix
+                else:
+                    prob_matrix = soft_count_probabilities_for_time[t]
+                for from_state in self.state_numbers:
+                    for to_state in self.state_numbers:
+                        prob = p_tij[t][from_state][to_state] 
+                        prob_matrix[from_state][to_state] += prob
+                
+    
+        for from_state in self.state_numbers:
+            if verbose_flag: print '\tFrom State %s' % from_state
+            from_state_soft_total = sum([x[from_state][to_state] for x in soft_count_probabilities_for_time.values() for to_state in self.state_numbers])
+            for to_state in self.state_numbers:
+                fromto_soft_total = sum([x[from_state][to_state] for x in soft_count_probabilities_for_time.values()])
+                calculated_transitionProbs[from_state][to_state] = fromto_soft_total / from_state_soft_total
+                if verbose_flag: print '\t\tTo State %d      prob: %s   (%s over %s)' % (to_state, calculated_transitionProbs[from_state][to_state], fromto_soft_total, from_state_soft_total)
+        
+        for i in self.state_numbers:
+            for j in self.state_numbers:    
+                if verbose_flag: print 'State %s to %s: Old transitionProbs=%s, recalced=%s, equal=%s' % (i, j, self.transitionProbs[i][j], calculated_transitionProbs[i][j], self.transitionProbs[i][j] == calculated_transitionProbs[i][j])
+    
+        if verbose_flag:
+            print '-----------'
+            print 'pi'
+            print '-----------'
+    
+        ''' 
+        This is the ratio of of time that is spent transitioning from state i at the first time slot t=0
+        Unfortunately we didn't save this information in any structure
+        So - recalculate  gamma
+        '''
+        t0_soft_total = sum([ sum(soft_count_probabilities_for_time[0][from_state]) for from_state in self.state_numbers])
+        calculated_pi = [0.0 for state in self.state_numbers]                  
+        for from_state in self.state_numbers:
+            calculated_pi[from_state] = sum(soft_count_probabilities_for_time[0][from_state]) / t0_soft_total
+            if verbose_flag: print '\tState %s : %s' % (from_state, calculated_pi[from_state])
+            
+        return calculated_pi, calculated_transitionProbs
+         
     def maximization_part_1(self):
         '''
         calculate, for each state, what the total soft counts are for each letter generated by that state over 
@@ -499,7 +663,7 @@ class HmmModel(object):
             backward_probabilities = self.backward_probabilities_by_word[training_word]
             word_parts = training_word.parts()
             wordlen = len(word_parts)
-            tmp_alpha_total = sum(forward_probabilities[wordlen])
+            #tmp_alpha_total = sum(forward_probabilities[wordlen])
             #tmp_beta_total  = sum([backward_probabilities[0][i]*pi[i] for i in self.state_numbers])
             for t,c in enumerate(word_parts):
                 if t not in soft_count_probabilities_for_time:
@@ -509,7 +673,7 @@ class HmmModel(object):
                     prob_matrix = soft_count_probabilities_for_time[t]
                 for from_state in self.state_numbers:
                     for to_state in self.state_numbers:
-                        prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] / tmp_alpha_total 
+                        prob = forward_probabilities[t][from_state] * self.transitionProbs[from_state][to_state] * self.emissionProbs[from_state][c] * backward_probabilities[t+1][to_state] # / tmp_alpha_total 
                         prob_matrix[from_state][to_state] += prob
                 
     
@@ -634,7 +798,7 @@ class HmmModel(object):
             print '\ttime:\t', '\t'.join([str(t) for t in range(t_len)])
             print '\tstate:\t', '\t'.join([str(xhat[t]) for t in range(t_len)])
         
-    def expectation_maximization(self, training, title='Expectation Maximization', min_loop_cnt=20, max_loop_cnt=1000, min_probability_increment=0.00000000001):
+    def expectation_maximization(self, training, title='Expectation Maximization', min_loop_cnt=1, max_loop_cnt=1000, min_probability_increment=0.00000001):
         '''
         Create a loop with the Expectation and Maximization functions that you have already written. 
         Need to set a stopping condition for the Expectation portion. 
@@ -675,7 +839,7 @@ class HmmModel(object):
     
         for loopCnt in range(max_loop_cnt):
             print '----------------------------------------------'
-            print '%s: - Loop #%d' % (title,loopCnt)
+            print '%s: - Loop #%d - total probability %s' % (title,loopCnt, hmmModel.total_probability)
             print '----------------------------------------------'
             
             new_hmmModel = hmmModel.getNextHmmModel(training)
@@ -714,8 +878,9 @@ class HmmModel(object):
         print '----------------------------------------------'
         
         hmmMax.printParameters(title, sortEmissionByProbability=True)
+        if verbose_flag: hmmMax.showViterbiPath()
                 
-        return history         
+        return history, hmmMax         
     
          
 
@@ -765,7 +930,7 @@ class TrainingNormal(object):
                 if not line: 
                     continue            # ignore empty lines
                 if line[-1] != '#':
-                    line = line + '#'   # append terminating character if it does not exist
+                    line = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])   # append terminating character if it does not exist
                 self.training_words.append(TrainingWordAlpha(line))
                 
         self.training_chars = list(sorted(set([y for x in self.training_words for y in x.parts()])))
@@ -806,9 +971,10 @@ class TrainingPhonemic(TrainingNormal):
         self.cmu_phonemes = dict()
         for line in cmu_phoneme_content:
             if not line: continue
-            if line[0] == ';': continue;
+            if line[0].lower() not in 'abcdefghijklmnopqrstuvwxyz': continue;
             words = line.strip().lower().split()
-            self.cmu_phonemes[words[0]] = [x for x in words[1:]] + ['#']
+            cleaned_word = ''.join([x for x in words[0] if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+            self.cmu_phonemes[cleaned_word] = [x for x in words[1:]] + ['#']
             
     def loadTrainingFile(self):
         if not os.path.exists(self.fname):
@@ -825,14 +991,13 @@ class TrainingPhonemic(TrainingNormal):
                 line = line.strip().lower()
                 if not line: 
                     continue            # ignore empty lines
-                if line[-1] == '#':
-                    line = line[0:-1]
-                if line not in self.cmu_phonemes:
+                cleaned_word = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+                if cleaned_word not in self.cmu_phonemes:
                     print 'Training word "%s" is missing from phoneme file "%s"' % (line, self.phonemeFile)
                     continue
-                wprd_as_phonemes = self.cmu_phonemes[line]
-                self.training_words.append(TrainingWordPhonemic(line, wprd_as_phonemes))
-                for phoneme in wprd_as_phonemes:
+                word_as_phonemes = self.cmu_phonemes[cleaned_word]
+                self.training_words.append(TrainingWordPhonemic(cleaned_word, word_as_phonemes))
+                for phoneme in word_as_phonemes:
                     self.all_phonemes.add(phoneme)
                 
         print('--------')
@@ -896,10 +1061,8 @@ def bonusProjectPhonemicTranscription(trainingFile, phonemeFile):
     
     hmmModel = HmmModel(None, None, None)
     hmmModel.setInitialParams(2, training.getAllChars())
-    history = hmmModel.expectation_maximization(training)        
-    history[-1].printParameters(title='Training with Phonemes: Final Loop', sortEmissionByProbability=False)
-    history[-1].showViterbiPath()
-    return history
+    history, hmmMax = hmmModel.expectation_maximization(training)        
+    return history, hmmMax
        
 def perform_one_loop(result_dir=None):
     global verbose_flag
@@ -927,10 +1090,7 @@ def perform_one_loop(result_dir=None):
         hmmModel.setInitialParams(2, training.getAllChars())
         hmmModel.validateSetup()  # just check the geometry of variables - this method should probabably go away since methods above are generating all variables properly
     
-        history = hmmModel.expectation_maximization(training)
-        if verbose_flag:
-            history[-1].printParameters(title='Final Loop #%s: Expectation Maximizaton' % len(history))
-        history[-1].showViterbiPath()
+        history, hmmMax = hmmModel.expectation_maximization(training)
     
     if not doVisualization:
         print '-----------------------------------------------------------------'
@@ -951,7 +1111,7 @@ def perform_one_loop(result_dir=None):
         
     if doPhonemicMaximization:
         CMU_PHONEME_FILE = 'cmudict.0.7a.txt'
-        history = bonusProjectPhonemicTranscription(sys.argv[1], CMU_PHONEME_FILE)
+        history, hmmMax = bonusProjectPhonemicTranscription(sys.argv[1], CMU_PHONEME_FILE)
         if doVisualization:
             title = 'Phonemic Maximization'
             visualization(history[1:], title, result_dir=result_dir) # drop first one in history because it was randomly generated and skews the graph
@@ -963,12 +1123,16 @@ def main():
     if not os.path.exists(RESULT_ROOT_DIR):
         os.mkdir(RESULT_ROOT_DIR)
     
+    if redirectOutput:
+        print 'All output will be redirected into %s' % os.path.join(RESULT_ROOT_DIR, 'result-*', 'out.log')
+        
     for i in range(NUM_LOOPS):
         result_dir = os.path.join(RESULT_ROOT_DIR, 'result-%d' % i)
         if not os.path.exists(result_dir):
             os.mkdir(result_dir)
         stdout_file = os.path.join(result_dir, 'out.log')
-        sys.stdout = open(stdout_file, "w")
+        if redirectOutput:
+            sys.stdout = open(stdout_file, "w")
 
         perform_one_loop(result_dir=result_dir)
              
