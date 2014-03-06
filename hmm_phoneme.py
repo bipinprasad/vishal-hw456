@@ -10,11 +10,12 @@ import traceback
 import math
 from collections import defaultdict
 
-verbose_flag = False
+verbose_flag = True
 doVisualization = True
 doRegularMaximization = True
 doPhonemicMaximization = True
 redirectOutput = True
+cleanTrainingWord = False   # clean puncutation from training words - turned off to ensure good match between phonemic and regular normalization.
 
 # training = None
 # hmmModel = None
@@ -154,13 +155,23 @@ class HmmModel(object):
         if self.state_cnt != len(self.emissionProbs):
             sys.exit('Emission probalities should be defined for %d states, but found only %d entries' % (self.state_cnt, len(self.emissionProbs)))
     
-    
+    def charsWithZeroEmissionInAllStates(self):
+        '''
+        Return a list of characters that have zero emission in all states
+        '''
+        chars = list()
+        for c in self.emissionProbs[0].keys():
+            prob_across_states = sum([emissionProb[c] for emissionProb in self.emissionProbs])
+            if prob_across_states <= 0.0:
+                chars.append(c)
+        return chars
+        
     def printParameters(self, title, sortEmissionByProbability=False): 
         print '----------------------'
         print title
         print '----------------------'   
         print
-        print 'Total Word Probabilities: %s' % self.total_probability
+        print 'Total Word Probabilities: %s for %d words' % (self.total_probability, len(self.training.training_words))
         print 'Number of states: %d' % self.state_cnt
         print 'State numbers: %s' % self.state_numbers
         print 'State Probability, pi (%s):' % sum(self.pi)
@@ -174,7 +185,7 @@ class HmmModel(object):
         print 'Emission Probabilities:'
         for state_num in self.state_numbers:
             emissionProb = self.emissionProbs[state_num]
-            print '\tFrom state %d: total=%s' % (state_num, sum(emissionProb.values()))
+            print '\tFrom state %d: total=%s for %d chars' % (state_num, sum(emissionProb.values()), len(emissionProb.keys()))
             if sortEmissionByProbability:
                 # print values emission probabilities sorted with the highest probability values
                 # showing up first.
@@ -272,7 +283,7 @@ class HmmModel(object):
                     tmp = alpha_i * a_ij * b
                     formula = '%s*%s*%s=%s' % (alpha_i,a_ij,b,tmp) 
                     formulas.append(formula)
-                    if verbose_flag == 1:
+                    if verbose_flag:
                         print "\t\t  from state ", i, " previous Alpha times arc\'s a and b: ", tmp, ' using ', formula
                     prob_sum += tmp
                 tmp_sum_of_alphas += prob_sum
@@ -354,7 +365,8 @@ class HmmModel(object):
         
     #Takes in a corpus file, returns the total probabilities of each word in it
     def calculate_total_probabilities(self, training):
-        for training_word in training.training_words:
+        self.training = training
+        for training_word in sorted(training.training_words, key=lambda x: x.word):
             a = self.calculate_forward_probabilities(training_word)
             b = self.calculate_backward_probabilities(training_word)
             
@@ -372,7 +384,7 @@ class HmmModel(object):
             print 'Total Probabilities:'
             print '--------------------'
         
-            for training_word in training.training_words:
+            for training_word in sorted(training.training_words, key=lambda x: x.word):
                 print '\tword %s probability: %s' % (training_word.word, self.total_probability_by_word[training_word])
     
             print '\n\tTotal Probability for all words: %s' % (self.total_probability)
@@ -731,7 +743,7 @@ class HmmModel(object):
         chi_by_word     = dict()
         xhat_by_word    = dict()
         
-        training_words = [x for x in self.forward_probabilities_by_word.keys()]
+        training_words = sorted([x for x in self.forward_probabilities_by_word.keys()], key=lambda x: x.word)
         
         for training_word in training_words:
             # initialize the delta structure with proper size
@@ -853,6 +865,11 @@ class HmmModel(object):
                 if (total_prob_new - total_prob) < min_probability_increment:
                     print '%s: Completed after %d loops, since new probability (%s), did not change enough from old probability (%s)' % (title, loopCnt, total_prob_new, total_prob)
                     break
+                chars = new_hmmModel.charsWithZeroEmissionInAllStates()
+                if chars:
+                    print '%s: Completed after %d loops, since new model with probability (%s), has following chars with zero emission in all states:\n\t"%s"' % (title, loopCnt, total_prob_new, '","'.join(chars))
+                    break
+            
             
             if verbose_flag:
                 print '%s: %d loop, new probability (%s), old probability (%s)' % (title, loopCnt, total_prob_new, total_prob)
@@ -929,9 +946,11 @@ class TrainingNormal(object):
                 line = line.strip().lower()
                 if not line: 
                     continue            # ignore empty lines
-                if line[-1] != '#':
-                    line = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])   # append terminating character if it does not exist
-                self.training_words.append(TrainingWordAlpha(line))
+                if cleanTrainingWord:
+                    cleaned_word = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+                else:
+                    cleaned_word = line if line[-1] == '#' else line + '#'
+                self.training_words.append(TrainingWordAlpha(cleaned_word))
                 
         self.training_chars = list(sorted(set([y for x in self.training_words for y in x.parts()])))
                 
@@ -973,7 +992,10 @@ class TrainingPhonemic(TrainingNormal):
             if not line: continue
             if line[0].lower() not in 'abcdefghijklmnopqrstuvwxyz': continue;
             words = line.strip().lower().split()
-            cleaned_word = ''.join([x for x in words[0] if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+            if cleanTrainingWord:
+                cleaned_word = ''.join([x for x in words[0] if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+            else:
+                cleaned_word = words[0] + '#'
             self.cmu_phonemes[cleaned_word] = [x for x in words[1:]] + ['#']
             
     def loadTrainingFile(self):
@@ -991,7 +1013,10 @@ class TrainingPhonemic(TrainingNormal):
                 line = line.strip().lower()
                 if not line: 
                     continue            # ignore empty lines
-                cleaned_word = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+                if cleanTrainingWord:
+                    cleaned_word = ''.join([x for x in line if x in 'abcdefghijklmnopqrstuvwxyz'] + ['#'])
+                else:
+                    cleaned_word = line if line[-1] == '#' else line + '#'
                 if cleaned_word not in self.cmu_phonemes:
                     print 'Training word "%s" is missing from phoneme file "%s"' % (line, self.phonemeFile)
                     continue
@@ -1056,6 +1081,7 @@ def bonusProjectPhonemicTranscription(trainingFile, phonemeFile):
     training = TrainingPhonemic(trainingFile, phonemeFile)
     
     print('----------------------------------------')
+    print('     Phonemic                           ')
     print('Using Phonemes instead of Training Words')
     print('----------------------------------------')
     
@@ -1118,7 +1144,7 @@ def perform_one_loop(result_dir=None):
 
 def main():
     RESULT_ROOT_DIR = 'results_phoneme'
-    NUM_LOOPS       = 20
+    NUM_LOOPS       = 1
     
     if not os.path.exists(RESULT_ROOT_DIR):
         os.mkdir(RESULT_ROOT_DIR)
